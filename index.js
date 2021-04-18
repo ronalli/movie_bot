@@ -54,6 +54,7 @@ bot.on('message', msg => {
 	const chatId = helper.getChatId(msg);
 	switch (msg.text) {
 		case kb.home.favourite:
+			showFavouriteFilms(chatId, msg.from.id)
 			break;
 		case kb.home.films:
 			bot.sendMessage(chatId, `Выберите жанр:`, {
@@ -97,7 +98,30 @@ bot.on('message', msg => {
 
 
 bot.on('callback_query', query => {
-	console.log(query.data);
+	const userId = query.from.id;
+	let data;
+	try {
+		data = JSON.parse(query.data)
+	} catch (e) {
+		throw new Error('Data is not an object')
+	}
+
+	const { type } = data;
+
+	switch (type) {
+		case ACTION_TYPE.SHOW_CINEMS_MAP:
+			break;
+		case ACTION_TYPE.SHOW_FILMS:
+			break;
+		case ACTION_TYPE.SHOW_CINEMS:
+			break;
+		case ACTION_TYPE.TOGGLE_FAV_FILM:
+			toggleFavouriteFilm(userId, query.id, data)
+			break;
+		default:
+			break;
+	}
+
 })
 
 
@@ -114,40 +138,53 @@ bot.onText(/\/start/, msg => {
 bot.onText(/\/f(.+)/, (msg, [source, match]) => {
 	const filmUuid = helper.getItemUuid(source);
 	const chatId = helper.getChatId(msg);
-	Film.findOne({ uuid: filmUuid }).then(film => {
 
-		const caption = `Название: ${film.name}\nГод: ${film.year}\nРейтинг: ${film.rate}\nСтрана: ${film.country}`
-		bot.sendPhoto(chatId, film.picture, {
-			caption: caption,
-			reply_markup: {
-				inline_keyboard: [
-					[
-						{
-							text: 'Добавить в избранное',
-							callback_data: JSON.stringify({
-								type: ACTION_TYPE.TOGGLE_FAV_FILM,
-								filmUuid: film.uuid
-							})
-						},
-						{
-							text: 'Показать кинотеатры',
-							callback_data: JSON.stringify({
-								type: ACTION_TYPE.SHOW_CINEMS,
-								cinemasUuid: film.cinemas
-							})
-						}
-					],
-					[
-						{
-							text: `Кинопоиск ${film.name}`,
-							url: film.link
-						}
 
-					]
-				]
+	Promise.all([
+		Film.findOne({ uuid: filmUuid }), User.findOne({ telegramId: msg.from.id })
+	])
+		.then(([film, user]) => {
+
+			let isFav = false;
+			if (user) {
+				isFav = user.films.indexOf(film.uuid) !== -1
 			}
+
+			const favText = isFav ? 'Удалить из избранного' : 'Добавить в избранное'
+
+			const caption = `Название: ${film.name}\nГод: ${film.year}\nРейтинг: ${film.rate}\nСтрана: ${film.country}`
+			bot.sendPhoto(chatId, film.picture, {
+				caption: caption,
+				reply_markup: {
+					inline_keyboard: [
+						[
+							{
+								text: favText,
+								callback_data: JSON.stringify({
+									type: ACTION_TYPE.TOGGLE_FAV_FILM,
+									filmUuid: film.uuid,
+									isFav: isFav
+								})
+							},
+							{
+								text: 'Показать кинотеатры',
+								callback_data: JSON.stringify({
+									type: ACTION_TYPE.SHOW_CINEMS,
+									cinemasUuid: film.cinemas
+								})
+							}
+						],
+						[
+							{
+								text: `Кинопоиск ${film.name}`,
+								url: film.link
+							}
+
+						]
+					]
+				}
+			})
 		})
-	})
 })
 
 
@@ -239,6 +276,52 @@ function sendHTML(chatId, html, kbName = null) {
 	bot.sendMessage(chatId, html, option);
 }
 
+function toggleFavouriteFilm(userId, queryId, { filmUuid, isFav }) {
+
+	let userPromise
+
+	User.findOne({ telegramId: userId })
+		.then(user => {
+			if (user) {
+				if (isFav) {
+					user.films = user.films.filter(fUuid => fUuid !== filmUuid)
+				} else {
+					user.films.push(filmUuid)
+				}
+				userPromise = user
+			} else {
+				userPromise = new User({
+					telegramId: userId,
+					films: [filmUuid]
+				})
+			}
+
+			const answerText = isFav ? 'Удалено' : 'Добавлено'
+
+			userPromise.save().then(_ => {
+				bot.answerCallbackQuery(queryId, { text: answerText })
+			}).catch(err => console.log(err))
+		}).catch(err => console.log(err))
+}
+
+function showFavouriteFilms(chatId, telegramId) {
+	let html = 'Вы пока ничего не добавили в избранное!'
+	User.findOne({ telegramId }).then(user => {
+		if (user) {
+			console.log(user);
+			Film.find({ uuid: { '$in': user.films } }).then(films => {
+				if (films.length) {
+					console.log(films);
+					html = films.map((f, i) => {
+						return `<b>${i + 1}</b> ${f.name} - ${f.rate} (/f${f.uuid})`
+					}).join('\n')
+				}
+				sendHTML(chatId, html, 'home');
+			})
+		}
+
+	})
+}
 
 
 // const inline_keyboard = [
