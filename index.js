@@ -1,22 +1,32 @@
 require('dotenv').config();
-// const debugText = require('./helper');
 const database = require('./database.json');
 const helper = require('./helper');
 const kb = require('./keyboard-buttons');
 const keyboard = require('./keyboard');
+const geolib = require('geolib');
+const _ = require('lodash');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const TelegramBot = require('node-telegram-bot-api');
 const { getChatId } = require('./helper');
+const { films } = require('./keyboard');
 const TOKEN = process.env.API_TOKEN;
 const mongoDB = 'mongodb://localhost/cinemadb';
 
 helper.logStart();
 
 
+const ACTION_TYPE = {
+	TOGGLE_FAV_FILM: 'tff',
+	SHOW_CINEMS: 'sc',
+	SHOW_CINEMS_MAP: 'scm',
+	SHOW_FILMS: 'sf'
+}
+
 mongoose.Promise = global.Promise
 mongoose.connect(mongoDB, {
-	useUnifiedTopology: true
+	useUnifiedTopology: true,
+	useNewUrlParser: true
 }).then(() => {
 	console.log('MongoDB connected');
 }).catch((err) => {
@@ -25,9 +35,11 @@ mongoose.connect(mongoDB, {
 
 require('./models/film.model')
 require('./models/cinema.model')
+require('./models/user.model')
 
 const Film = mongoose.model('films')
 const Cinema = mongoose.model('cinemas')
+const User = mongoose.model('users')
 
 // database.films.forEach(f => new Film(f).save())
 // database.cinemas.forEach(c => new Cinema(c).save().catch(err => console.log(err)))
@@ -77,10 +89,15 @@ bot.on('message', msg => {
 			break;
 	}
 	if (msg.location) {
-		console.log(msg.location);
+		// console.log(msg.location);
 		getCinemasInCoord(chatId, msg.location)
 	}
 
+})
+
+
+bot.on('callback_query', query => {
+	console.log(query.data);
 })
 
 
@@ -107,11 +124,17 @@ bot.onText(/\/f(.+)/, (msg, [source, match]) => {
 					[
 						{
 							text: 'Добавить в избранное',
-							callback_data: film.uuid
+							callback_data: JSON.stringify({
+								type: ACTION_TYPE.TOGGLE_FAV_FILM,
+								filmUuid: film.uuid
+							})
 						},
 						{
 							text: 'Показать кинотеатры',
-							callback_data: film.uuid
+							callback_data: JSON.stringify({
+								type: ACTION_TYPE.SHOW_CINEMS,
+								cinemasUuid: film.cinemas
+							})
 						}
 					],
 					[
@@ -127,12 +150,59 @@ bot.onText(/\/f(.+)/, (msg, [source, match]) => {
 	})
 })
 
+
+bot.onText(/\/c(.+)/, (msg, [source, match]) => {
+	const cinemaUuid = helper.getItemUuid(source);
+	const chatId = helper.getChatId(msg)
+
+	Cinema.findOne({ uuid: cinemaUuid }).then(cinema => {
+
+		// console.log(a);
+		bot.sendMessage(chatId, `Кинотеатр: ${cinema.name}`, {
+			reply_markup: {
+				inline_keyboard: [
+					[
+						{
+							text: `Официальный сайт`,
+							url: cinema.url
+						},
+						{
+							text: 'Показать на карте',
+							callback_data: JSON.stringify({
+								type: ACTION_TYPE.SHOW_CINEMS_MAP,
+								lat: cinema.location.latitude,
+								lon: cinema.location.longitude
+							})
+						}
+					],
+					[
+						{
+							text: 'Показать фильмы',
+							callback_data: JSON.stringify({
+								type: ACTION_TYPE.SHOW_FILMS,
+								filmUuids: cinema.films
+							})
+						}
+					]
+				]
+			}
+		})
+	})
+})
+
 //============================================
 
 function getCinemasInCoord(chatId, location) {
 	Cinema.find({}).then(cinemas => {
+
+		cinemas.forEach(c => {
+			c.distance = geolib.getDistance(location, c.location) / 1000;
+		})
+
+		cinemas = _.sortBy(cinemas, 'distance');
+
 		const html = cinemas.map((c, i) => {
-			return `<b>${i + 1}</b> ${c.name}. <em>Расстояние</em> - <strong>${1000}</strong>км. /c${c.uuid}`
+			return `<b>${i + 1}</b> ${c.name}. <em>Расстояние</em> - <strong>${c.distance}</strong>км. /c${c.uuid}`
 		}).join('\n')
 		sendHTML(chatId, html, 'home')
 	})
