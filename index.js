@@ -18,8 +18,8 @@ helper.logStart();
 
 const ACTION_TYPE = {
 	TOGGLE_FAV_FILM: 'tff',
-	SHOW_CINEMS: 'sc',
-	SHOW_CINEMS_MAP: 'scm',
+	SHOW_CINEMAS: 'sc',
+	SHOW_CINEMAS_MAP: 'scm',
 	SHOW_FILMS: 'sf'
 }
 
@@ -106,14 +106,21 @@ bot.on('callback_query', query => {
 		throw new Error('Data is not an object')
 	}
 
+	// console.log(query);
+
 	const { type } = data;
 
 	switch (type) {
-		case ACTION_TYPE.SHOW_CINEMS_MAP:
+		case ACTION_TYPE.SHOW_CINEMAS_MAP:
+			const { lat, lon } = data
+			bot.sendLocation(query.message.chat.id, lat, lon)
 			break;
 		case ACTION_TYPE.SHOW_FILMS:
+			showFilmsByQuery(userId, data)
 			break;
-		case ACTION_TYPE.SHOW_CINEMS:
+		case ACTION_TYPE.SHOW_CINEMAS:
+			showCinemasByQuery(userId, data)
+			// console.log(query);
 			break;
 		case ACTION_TYPE.TOGGLE_FAV_FILM:
 			toggleFavouriteFilm(userId, query.id, data)
@@ -122,6 +129,34 @@ bot.on('callback_query', query => {
 			break;
 	}
 
+})
+
+bot.on('inline_query', query => {
+	Film.find({}).then(films => {
+		const results = films.map((f, i) => {
+			const caption = `Название: ${f.name}\nГод: ${f.year}\nРейтинг: ${f.rate}\nСтрана: ${f.country}`
+			return {
+				id: f.uuid,
+				type: 'photo',
+				photo_url: f.picture,
+				thumb_url: f.picture,
+				caption: caption,
+				reply_markup: {
+					inline_keyboard: [
+						[
+							{
+								text: `Кинопоиск: ${f.name}`,
+								url: f.link
+							}
+						]
+					]
+				}
+			}
+		})
+		bot.answerInlineQuery(query.id, results, {
+			cache_time: 0
+		})
+	})
 })
 
 
@@ -169,14 +204,14 @@ bot.onText(/\/f(.+)/, (msg, [source, match]) => {
 							{
 								text: 'Показать кинотеатры',
 								callback_data: JSON.stringify({
-									type: ACTION_TYPE.SHOW_CINEMS,
+									type: ACTION_TYPE.SHOW_CINEMAS,
 									cinemasUuid: film.cinemas
 								})
 							}
 						],
 						[
 							{
-								text: `Кинопоиск ${film.name}`,
+								text: `Кинопоиск`,
 								url: film.link
 							}
 
@@ -206,7 +241,7 @@ bot.onText(/\/c(.+)/, (msg, [source, match]) => {
 						{
 							text: 'Показать на карте',
 							callback_data: JSON.stringify({
-								type: ACTION_TYPE.SHOW_CINEMS_MAP,
+								type: ACTION_TYPE.SHOW_CINEMAS_MAP,
 								lat: cinema.location.latitude,
 								lon: cinema.location.longitude
 							})
@@ -308,12 +343,12 @@ function showFavouriteFilms(chatId, telegramId) {
 	let html = 'Вы пока ничего не добавили в избранное!'
 	User.findOne({ telegramId }).then(user => {
 		if (user) {
-			console.log(user);
+			// console.log(user);
 			Film.find({ uuid: { '$in': user.films } }).then(films => {
 				if (films.length) {
-					console.log(films);
+					// console.log(films);
 					html = films.map((f, i) => {
-						return `<b>${i + 1}</b> ${f.name} - ${f.rate} (/f${f.uuid})`
+						return `<b>${i + 1}</b>. ${f.name} - ${f.rate} (/f${f.uuid})`
 					}).join('\n')
 				}
 				sendHTML(chatId, html, 'home');
@@ -323,6 +358,26 @@ function showFavouriteFilms(chatId, telegramId) {
 	})
 }
 
+function showCinemasByQuery(chatId, { cinemasUuid }) {
+	// console.log(cinemasUuid);
+	let html
+	Cinema.find({ uuid: { '$in': cinemasUuid } }).then(cinemas => {
+		html = cinemas.map((c, i) => {
+			return `<b>${i + 1}</b>. ${c.name} - (/c${c.uuid})`
+		}).join('\n')
+		sendHTML(chatId, `Кинотеатры, где показывают фильмы:\n${html}`, 'fome')
+	})
+}
+
+function showFilmsByQuery(userId, { filmUuids }) {
+	let html
+	Film.find({ uuid: { '$in': filmUuids } }).then(films => {
+		html = films.map((f, i) => {
+			return `${i + 1}. ${f.name}`
+		}).join('\n')
+		sendHTML(userId, `Фильмы, которые показывают в кинотеатре: \n${html}`, 'home')
+	})
+}
 
 // const inline_keyboard = [
 // 	[
